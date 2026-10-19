@@ -63,4 +63,4 @@ Pillow). Run them from inside the `art` folder:
 * Game, art and code: jaychugstein
 * 5x7 font from the Arduboy2 library (BSD 3-Clause)
 * Browser version runs on the Ardens emulator by Peter Brown (MIT, see `docs/ARDENS_LICENSE.txt`)
-* Inspired by a gag from *The Simpsons*. Bible verse: Hebrews 4:12, King James Version.
+* Inspired by *The Simpsons* season 11 Episode 14. Bible verse: Hebrews 4:12, King James Version.
