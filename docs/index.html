@@ -109,10 +109,24 @@ document.querySelectorAll('#pad .btn').forEach(function(b){
 });
 function loadFile(name,data){var p=Module._malloc(data.length);Module.HEAPU8.set(data,p);Module.ccall('load_file','number',['string','string','number','number'],['file',name,p,data.length]);Module._free(p);}
 Module.onRuntimeInitialized=function(){
+  try{Module.ccall('setparam','number',['string','string'],['v','200']);}catch(e){}   // full volume (the emulator starts at half)
   fetch('game.hex',{cache:'no-store'}).then(function(r){return r.arrayBuffer();})
   .then(function(b){loadFile('game.hex',new Uint8Array(b));document.getElementById('load').hidden=true;Module.canvas.focus();})
   .catch(function(){document.getElementById('load').textContent='COULD NOT LOAD GAME FILE';});
 };
+</script>
+<script>
+// Sound on phones: browsers keep sound off until you touch the page. On the first touch, wake the
+// emulator's audio, and play a silent clip so iPhones use "playback" sound (heard even on silent mode).
+(function(){
+  var done=false;
+  function unlock(){
+    try{ if(window.Module&&Module._saudio_context&&Module._saudio_context.state!=='running') Module._saudio_context.resume(); }catch(e){}
+    if(done) return; done=true;
+    try{ var a=new Audio('data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA'); a.loop=true; a.volume=0.01; a.play().catch(function(){}); }catch(e){}
+  }
+  ['pointerdown','touchstart','touchend','keydown','click'].forEach(function(t){document.addEventListener(t,unlock,{capture:true});});
+})();
 </script>
 <script src="ArdensPlayer.js"></script>
 
