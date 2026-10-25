@@ -13,13 +13,14 @@
 #include "ctrl.h"
 
 Arduboy2Base ab;
+#include "sound.h"
 
 #define BTN_FIRE B_BUTTON   // outer button
 #define BTN_LOAD A_BUTTON   // inner button
 #define ANY_BTN (UP_BUTTON | DOWN_BUTTON | LEFT_BUTTON | RIGHT_BUTTON | A_BUTTON | B_BUTTON)
 #define EE_BEST 80
 
-enum { M_TITLE, M_BOOM, M_PLAY, M_OVER, M_COMING, M_VERSE, M_CTRL };
+enum { M_TITLE, M_BOOM, M_PLAY, M_OVER, M_COMING, M_VERSE, M_CTRL, M_SOUND };
 uint8_t mode = M_TITLE;
 uint16_t tick = 0;
 
@@ -91,7 +92,6 @@ void drawBoom() {
 }
 
 // ---------------------------------------------------------------- the game
-#define HORIZON 21
 // three walking lanes: far, middle, near
 const uint8_t LANE_Y[3] = {32, 40, 52};   // feet line
 const uint8_t LANE_AIM[3] = {23, 28, 35};   // aim height: middle of a walker's body
@@ -124,7 +124,7 @@ uint16_t bonusT;   // frames left in the SECOND COMING bonus game
 #define BONUS_LEN (15 * 60)
 uint32_t score, best;
 uint16_t spawnT, playT;
-const char* msg; uint8_t msgT;
+const char* msg; const char* nextMsg; uint8_t msgT, msgAge;   // nextMsg waits until the current one has been read
 int8_t cloudX[2] = {20, 80};
 
 const char M_CONVERT[] PROGMEM = "CONVERT THE HEATHENS";
@@ -139,10 +139,13 @@ const char M_DOUBLE[] PROGMEM = "DOUBLE CONVERSION";
 const char M_LAST[] PROGMEM = "LAST BIBLE!";
 const char M_BACK[] PROGMEM = "HE'LL BE BACK";
 
-#define MSG_LONG 150
+#define MSG_LONG 220          // long lines show in two halves, almost 2 seconds each
+#define MSG_SHORT 120          // 2 seconds
+uint8_t readTime() { return msgT && strlen_P(msg) > 29 ? MSG_LONG : 90; }   // at least 1.5 s: how long a line stays up before another can replace it
+void showMsg(const char* m) { msg = m; msgT = strlen_P(m) > 29 ? MSG_LONG : MSG_SHORT; msgAge = 0; nextMsg = 0; }
 void say(const char* m) {
-  if (msg == M_LAST && msgT > 50 && m != M_RELOAD) return;   // let LAST BIBLE! be read before anything replaces it
-  msg = m; msgT = strlen_P(m) > 29 ? MSG_LONG : 100;
+  if (msgT && msgAge < readTime()) { if (m != msg) nextMsg = m; return; }   // still being read: the newest line waits its turn
+  showMsg(m);
 }
 
 // Draw a sprite stored as rows of (white bits, mask bits), straight into the screen buffer.
@@ -194,10 +197,8 @@ void startGame() {
   memset(wk, 0, sizeof(wk)); memset(bb, 0, sizeof(bb)); memset(pf, 0, sizeof(pf));
   aimX16 = 64 * 16; aimLane = 1; holdT = 0; aimY16 = LANE_AIM[1] * 16; ammo = 6; loading = 0; fireWait = 0;
   lives = 5; converts = 0; totalConv = 0; totalPart = 0; totalThrown = 0; bonusT = 0; misses = 0; score = 0; spawnT = 60; playT = 0;
-#ifdef TESTBIG
-  score = 999999UL; totalConv = 65535; totalPart = 65535; totalThrown = 65535; lives = 5;
-#endif
-  say(M_CONVERT);
+  showMsg(M_CONVERT);
+  playSong(SONG_SAINTS);
 }
 
 void poof(int16_t x, int16_t y) { for (uint8_t i = 0; i < NP; i++) if (!pf[i].t) { pf[i].t = 16; pf[i].x = x; pf[i].y = y; return; } }
@@ -253,43 +254,14 @@ void land(Bible& b) {
   }
   if (n >= 2) addScore(200);              // two with one bible
   if (!bonusT && converts >= CONVERTS_FOR_BONUS) {
-    converts = 0; bonusT = BONUS_LEN; spawnT = 20; msgT = 0;
-    mode = M_COMING; tick = 0;            // big SECOND COMING screen first
+    converts = 0; bonusT = BONUS_LEN; spawnT = 20; msgT = 0; nextMsg = 0;
+    mode = M_COMING; tick = 0; playSong(SONG_HALLELUJAH);   // big SECOND COMING screen first
   } else say(n >= 2 ? M_DOUBLE : grade == 3 ? M_FULL : M_GOT);
 }
 
-#ifdef TESTHIT
-// automatic hit test: one standing walker, one bible per case, result kept in testRes
-// cases 0..173: lane = k/58, direction = (k/29)%2, aim offset = k%29 - 14
-// cases 174..175: walker in front of the aimed lane (near in front of middle, middle in front of far)
-volatile uint8_t testRes[179] __attribute__((used)); uint8_t testK = 0, testT = 0;
-void testStep() {
-  if (testK >= 179) return;
-  if (testT == 0) {
-    memset(wk, 0, sizeof(wk)); memset(bb, 0, sizeof(bb));
-    Walker& w = wk[0]; w.on = 1; w.type = T_CAVE; w.spd = 0; w.x16 = 64 * 16;
-    int8_t off; uint8_t aimL;
-    if (testK < 174) { w.lane = testK / 58; w.dir = (testK / 29) & 1; off = testK % 29 - 14; aimL = w.lane; }
-    else if (testK < 176) { w.lane = testK == 174 ? 2 : 1; w.dir = 1; off = 0; aimL = w.lane - 1; }
-    else if (testK < 178) { w.lane = testK == 176 ? 0 : 1; w.dir = 1; off = 0; aimL = w.lane + 1; }   // lands on his legs
-    else { w.lane = 1; w.dir = 1; off = 0; aimL = 1; wk[1] = w; wk[1].x16 = 67 * 16; wk[1].dir = 0; }   // two at once
-    Bible& b = bb[0]; b.on = 1; b.t = 0; b.lane = aimL; b.tx = (64 + off) * 16; b.ty = LANE_AIM[aimL] * 16; b.dur = LANE_DUR[aimL];
-  }
-  if (++testT > 30) { testRes[testK] = wk[0].type + (testK == 178 ? wk[1].type * 16 : 0); testK++; testT = 0; }
-}
-#endif
 
 void updatePlay() {
   playT++;
-#ifdef TESTMSG
-  { static const char* const ALL[11] = {M_CONVERT, M_KEEP, M_GOT, M_WING, M_BAHAI, M_FULL, M_SECOND, M_RELOAD, M_DOUBLE, M_LAST, M_BACK};
-    msg = ALL[(playT / 160) % 11]; msgT = 90; lives = 5; }
-#endif
-#ifdef TESTHIT
-  testStep(); lives = 5; spawnT = 200; bonusT = 0; converts = 0;
-  for (uint8_t i = 0; i < NB; i++) if (bb[i].on && ++bb[i].t >= bb[i].dur) { bb[i].on = 0; land(bb[i]); }
-  return;
-#endif
   // aim
   if (ab.pressed(LEFT_BUTTON)) aimX16 -= 30;
   if (ab.pressed(RIGHT_BUTTON)) aimX16 += 30;
@@ -298,37 +270,18 @@ void updatePlay() {
   { int16_t ty = LANE_AIM[aimLane] * 16; aimY16 += (ty - aimY16) / 3; if (abs(ty - aimY16) < 3) aimY16 = ty; }
   aimX16 = constrain(aimX16, 6 * 16, 121 * 16);
 
-#ifdef TESTBOT
-#ifndef BOT_STOP
-#define BOT_STOP 60000
-#endif
-  bool botFire = false, botLoad = false;
-  { static uint8_t cool; if (cool) cool--;
-    for (uint8_t i = 0; i < NW; i++) { Walker& w = wk[i];
-      if (!w.on || w.type == T_SUIT) continue;
-      uint8_t dur = LANE_DUR[w.lane];
-      int16_t px = (w.x16 + (w.dir ? 1 : -1) * (int16_t)w.spd * dur) >> 4;
-      if (px < 8 || px > 120) continue;
-      aimX16 = (px + random(-8, 9)) * 16; aimLane = w.lane;
-      if (!cool && playT < BOT_STOP) { botFire = true; cool = 25; }
-      break; }
-    if (!ammo) botLoad = true; }
-#define FIREP (ab.justPressed(BTN_FIRE) || botFire)
-#define LOADP (ab.justPressed(BTN_LOAD) || botLoad)
-#else
 #define FIREP ab.justPressed(BTN_FIRE)
 #define LOADP ab.justPressed(BTN_LOAD)
-#endif
   // fire: the bible in your hand is thrown, then the next one comes up
   bool inHand = ammo || bonusT;
   if (holdT && inHand) holdT--;
   if (FIREP) {
-    if (!inHand) say(M_RELOAD);
+    if (!inHand) { say(M_RELOAD); sndEmpty(); }
     else if (!holdT) {
       for (uint8_t i = 0; i < NB; i++) if (!bb[i].on) {
         Bible& b = bb[i]; b.on = 1; b.t = 0; b.tx = aimX16; b.lane = aimLane; b.ty = LANE_AIM[aimLane] * 16;
         b.dur = LANE_DUR[aimLane];
-        holdT = bonusT ? RAISE_T / 2 : RAISE_T; if (totalThrown < 65535) totalThrown++;
+        holdT = bonusT ? RAISE_T / 2 : RAISE_T; if (totalThrown < 65535) totalThrown++; sndShoot();
         if (!bonusT) { ammo--; loading = 0; if (ammo == 1) say(M_LAST); }
         break;
       }
@@ -336,7 +289,7 @@ void updatePlay() {
   }
   // reload, one bible at a time
   if (LOADP && ammo < 6 && !loading) loading = 1;
-  if (loading && ++loading > 10) { loading = 1; if (!ammo) holdT = RAISE_T; if (++ammo >= 6) loading = 0; }
+  if (loading && ++loading > 10) { loading = 1; if (!ammo) holdT = RAISE_T; sndReload(); if (++ammo >= 6) loading = 0; }
 
   // bibles in flight
   for (uint8_t i = 0; i < NB; i++) if (bb[i].on && ++bb[i].t >= bb[i].dur) { bb[i].on = 0; land(bb[i]); }
@@ -352,14 +305,15 @@ void updatePlay() {
       if ((w.type == T_CAVE || w.type == T_UNIT) && lives && !bonusT) lives--;   // no penalty in the bonus game
     }
   }
-  if (!lives) { mode = M_OVER; tick = 0; if (score > best) { best = score; EEPROM.put(EE_BEST, best ^ 0xB1B1E000UL); } return; }
+  if (!lives) { mode = M_OVER; tick = 0; playSong(SONG_NEARER); if (score > best) { best = score; EEPROM.put(EE_BEST, best ^ 0xB1B1E000UL); } return; }
 
   // spawning gets quicker as the score climbs
   if (!--spawnT) { spawn(); spawnT = bonusT ? 22 + random(0, 18) : max(50, 170 - (int16_t)min(score / 30, 120)) + random(0, 50); }
   if (bonusT && !--bonusT) { ammo = 6; loading = 0; say(M_BACK); }   // bonus over: back to normal with a full load
 
   for (uint8_t i = 0; i < NP; i++) if (pf[i].t) pf[i].t--;
-  if (msgT) msgT--;
+  if (msgT) { msgT--; msgAge++; }
+  if (nextMsg && (!msgT || msgAge >= readTime())) showMsg(nextMsg);
   if ((playT & 63) == 0) { cloudX[0]--; if (cloudX[0] < -20) cloudX[0] = 127; }
   if ((playT & 127) == 0) { cloudX[1]--; if (cloudX[1] < -20) cloudX[1] = 127; }
 }
@@ -516,6 +470,34 @@ void drawVerse() {
   }
 }
 // controls screen: a little Arduboy with its buttons labelled; the fire button blinks
+// sound screen after the title: big SOUND, ON or OFF between arrows, all letters gently bobbing
+void big2(int16_t x, int16_t y, const char* s) {
+  for (uint8_t k = 0; *s; s++, k++, x += 12) {
+    uint8_t c = *s, g = (c < 32 || c > 90) ? 0 : c - 32; int8_t by = ((tick >> 3) + k) & 2 ? 1 : 0;
+    for (uint8_t i = 0; i < 5; i++) { uint8_t b = pgm_read_byte(&FONT[g * 5 + i]);
+      for (uint8_t j = 0; j < 7; j++) if (b >> j & 1) ab.fillRect(x + i * 2, y + by + j * 2, 2, 2, WHITE); }
+  }
+}
+uint8_t popT;                                     // little jump when you switch
+void note(int16_t x, int16_t y) { ab.fillCircle(x, y, 1, WHITE); ab.drawFastVLine(x + 1, y - 5, 5, WHITE); pset(x + 2, y - 4); pset(x + 3, y - 3); }
+void drawSound() {
+  ab.drawRect(0, 0, 128, 64, WHITE);
+  big2(35, 8, "SOUND");
+  bool on = ab.audio.enabled();
+  int8_t j = -(popT >> 1); if (popT) popT--;
+  txt(on ? 46 : 43, 36 + j, on ? "< ON >" : "< OFF >");
+  ab.fillRect(12, 36 + j, 4, 6, WHITE);                       // speaker
+  ab.drawLine(16, 36 + j, 20, 32 + j, WHITE); ab.drawLine(16, 41 + j, 20, 45 + j, WHITE); ab.drawFastVLine(20, 32 + j, 14, WHITE);
+  if (on) {
+    uint8_t w = (tick >> 3) & 3;                                // sound waves spreading out
+    for (uint8_t k = 1; k <= w; k++) { int8_t r = 2 + k * 3; for (int8_t dy = -r * 2 / 3; dy <= r * 2 / 3; dy++) pset(21 + r - dy * dy / (2 * r), 38 + j + dy); }
+    for (uint8_t k = 0; k < 2; k++) { uint8_t t = (tick + k * 32) & 63; note(96 + k * 12 + (t >> 4 & 1), 50 - t / 3); }   // music notes floating up
+  } else {
+    ab.drawLine(24, 34 + j, 31, 42 + j, WHITE); ab.drawLine(24, 42 + j, 31, 34 + j, WHITE);   // crossed out
+    for (uint8_t k = 0; k < 3; k++) { uint8_t t = (tick + k * 21) & 63; tiny(98 + k * 6 + (t >> 4 & 1), 48 - t / 3, "Z"); }   // snoozing
+  }
+  if (tick & 32) tiny(40, 54, "PRESS A OR B");
+}
 void drawCtrl() {
   memcpy_P(ab.sBuffer, CTRL, 1024);
   if (tick & 16) ab.fillCircle(CTRL_FIRE_X, CTRL_FIRE_Y, 3, WHITE);
@@ -559,6 +541,7 @@ void drawOver() {
 void setup() {
   ab.begin();
   ab.setFrameRate(60);
+  soundBegin(); playSong(SONG_GRACE);   // menu music from the start
   EEPROM.get(EE_BEST, best); best ^= 0xB1B1E000UL; if (best > 9999999UL) best = 0;
 }
 
@@ -570,7 +553,12 @@ void loop() {
   switch (mode) {
     case M_TITLE:
       drawTitle();
-      if (ab.justPressed(ANY_BTN)) { mode = M_BOOM; tick = 0; ab.setFrameRate(30); drawBoom(); }
+      if (ab.justPressed(ANY_BTN)) { mode = M_SOUND; tick = 0; }
+      break;
+    case M_SOUND:                                                       // sound on or off, then on with the show
+      drawSound();
+      if (tick > 10 && ab.justPressed(UP_BUTTON | DOWN_BUTTON | LEFT_BUTTON | RIGHT_BUTTON)) { ab.audio.toggle(); ab.audio.saveOnOff(); sndClick(); popT = 8; }
+      if (tick > 10 && ab.justPressed(A_BUTTON | B_BUTTON)) { mode = M_BOOM; tick = 0; ab.setFrameRate(30); drawBoom(); }
       break;
     case M_BOOM:
       drawBoom();
@@ -593,12 +581,13 @@ void loop() {
       break;
     case M_COMING:
       drawComing();
-      if (tick >= COMING_LEN) { mode = M_PLAY; say(M_SECOND); }
+      if (tick >= COMING_LEN) { mode = M_PLAY; say(M_SECOND); playSong(SONG_SAINTS); }
       break;
     case M_OVER:
       drawOver(); flip();
-      if (tick > 60 && ab.justPressed(ANY_BTN)) { mode = M_TITLE; tick = 0; }
+      if (tick > 60 && ab.justPressed(ANY_BTN)) { mode = M_TITLE; tick = 0; playSong(SONG_GRACE); }
       break;
   }
+  updateSound();
   ab.display();
 }
