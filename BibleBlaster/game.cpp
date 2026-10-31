@@ -470,7 +470,7 @@ void drawVerse() {
   }
 }
 // controls screen: a little Arduboy with its buttons labelled; the fire button blinks
-// sound screen after the title: big SOUND, ON or OFF between arrows, all letters gently bobbing
+// sound screen after the title explodes: big SOUND, ON or OFF between arrows, all letters gently bobbing
 void big2(int16_t x, int16_t y, const char* s) {
   for (uint8_t k = 0; *s; s++, k++, x += 12) {
     uint8_t c = *s, g = (c < 32 || c > 90) ? 0 : c - 32; int8_t by = ((tick >> 3) + k) & 2 ? 1 : 0;
@@ -553,16 +553,16 @@ void loop() {
   switch (mode) {
     case M_TITLE:
       drawTitle();
-      if (ab.justPressed(ANY_BTN)) { mode = M_SOUND; tick = 0; }
+      if (ab.justPressed(ANY_BTN)) { mode = M_BOOM; tick = 0; ab.setFrameRate(30); drawBoom(); }   // the title blows apart...
       break;
-    case M_SOUND:                                                       // sound on or off, then on with the show
+    case M_SOUND:                                                       // ...then sound on or off, then on with the show
       drawSound();
       if (tick > 10 && ab.justPressed(UP_BUTTON | DOWN_BUTTON | LEFT_BUTTON | RIGHT_BUTTON)) { ab.audio.toggle(); ab.audio.saveOnOff(); sndClick(); popT = 8; }
-      if (tick > 10 && ab.justPressed(A_BUTTON | B_BUTTON)) { mode = M_BOOM; tick = 0; ab.setFrameRate(30); drawBoom(); }
+      if (tick > 10 && ab.justPressed(A_BUTTON | B_BUTTON)) { mode = M_VERSE; tick = 0; }
       break;
     case M_BOOM:
       drawBoom();
-      if (tick >= BOOM_LEN) { mode = M_VERSE; tick = 0; ab.setFrameRate(60); }
+      if (tick >= BOOM_LEN) { mode = M_SOUND; tick = 0; ab.setFrameRate(60); }
       break;
     case M_PLAY:
       updatePlay();
